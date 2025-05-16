@@ -70,30 +70,19 @@ class NeurofeedbackModel:
         self.feedback_history = []
         self.target_activation_history = []
         
-        # Network and monitors
-        self.G_e = None
-        self.G_i = None
-        self.S_ee = None
-        self.S_ei = None
-        self.S_ie = None
-        self.S_ii = None
-        self.mon = None
-        
         # Set up the Izhikevich neural network
         self._setup_network()
     
     def _setup_network(self):
         """Set up the neural network with Izhikevich neurons"""
-        # Reset any previous networks - we need to start fresh
-        device.delete()
         
-        # Izhikevich neuron equations - FIXED for Brian2 compatibility with correct units
+        # Izhikevich neuron equations - FIXED for Brian2 compatibility
         eqs = '''
         dv/dt = (0.04*v**2 + 5*v + 140 - u + I)/ms : 1
-        du/dt = a*(b*v - u)/ms : 1
-        I = I_thal + I_noise : 1
+        du/dt = a*(b*v - u)/ms                      : 1
+        I = I_thal + I_noise                        : 1
         I_thal : 1
-        dI_noise/dt = -I_noise/ms + sigma*sqrt(2/ms)*xi : 1
+        dI_noise/dt = -I_noise/ms + sigma * xi * sqrt(2/ms)/ms : 1
         a : 1
         b : 1
         c : 1
@@ -143,7 +132,7 @@ class NeurofeedbackModel:
             S.connect(condition='i!=j')
         
         # Set up state monitor for recording membrane potentials
-        self.mon = StateMonitor(self.G_e, 'v', record=list(range(min(100, self.ne))))
+        self.mon = StateMonitor(self.G_e, 'v', record=True)
     
     def update_thalamic_input(self, active_msn):
         """
@@ -181,9 +170,8 @@ class NeurofeedbackModel:
         # Start simulation
         print(f"Starting {'baseline' if baseline_run else 'neurofeedback'} simulation...")
         
-        # For a new simulation, we need to create new network objects
-        # This ensures we don't reuse objects that have already been simulated
-        self._setup_network()
+        # Reset state monitor
+        self.mon = StateMonitor(self.G_e, 'v', record=True)
         
         # Global variables for storing simulation data
         self.weight_history = []
@@ -194,12 +182,17 @@ class NeurofeedbackModel:
         # Initialize Brian2 network
         net = Network(self.G_e, self.G_i, self.S_ee, self.S_ei, 
                       self.S_ie, self.S_ii, self.mon)
+        net.store('initial')
         
         # Calculate number of feedback iterations
         n_iterations = int(self.duration / self.feedback_interval)
         
+        run_time = 0*second
+        
         # Main simulation loop with feedback
         for i in range(n_iterations):
+            net.restore('initial')
+            
             # Select active MSNs based on probability distribution
             active = np.random.rand(self.n_striatum) < self.p_active
             
@@ -214,6 +207,7 @@ class NeurofeedbackModel:
             
             # Run simulation for the feedback interval
             net.run(self.feedback_interval)
+            run_time += self.feedback_interval
             
             # Get "EEG signal" - filtered average membrane potential
             eeg = np.mean(self.mon.v[:, -int(self.feedback_interval/self.dt):], axis=0)
@@ -224,11 +218,7 @@ class NeurofeedbackModel:
             
             # Calculate alpha band power
             alpha_mask = np.logical_and(f >= self.alpha_band[0], f <= self.alpha_band[1])
-            if np.any(alpha_mask):  # Check if there are any points in the alpha band
-                alpha_power = np.trapz(Pxx[alpha_mask], f[alpha_mask])
-            else:
-                alpha_power = 0
-                
+            alpha_power = np.trapz(Pxx[alpha_mask], f[alpha_mask])
             self.alpha_power_history.append(float(alpha_power))
             
             # Compare with threshold

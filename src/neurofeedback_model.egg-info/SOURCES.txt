@@ -1,0 +1,8 @@
+README.md
+run_neurofeedback.py
+setup.py
+src/neurofeedback_model.egg-info/PKG-INFO
+src/neurofeedback_model.egg-info/SOURCES.txt
+src/neurofeedback_model.egg-info/dependency_links.txt
+src/neurofeedback_model.egg-info/requires.txt
+src/neurofeedback_model.egg-info/top_level.txt

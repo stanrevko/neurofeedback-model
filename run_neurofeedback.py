@@ -17,8 +17,12 @@ src_dir = Path(__file__).parent / "src"
 sys.path.append(str(src_dir))
 
 # Import our modules
-from neurofeedback_model import NeurofeedbackModel, run_parameter_sweep, analyze_parameter_sweep
-from parameter_optimization import ParameterOptimizer
+try:
+    from neurofeedback_model import NeurofeedbackModel, run_parameter_sweep, analyze_parameter_sweep
+    from parameter_optimization import ParameterOptimizer
+except ImportError:
+    print("Error importing modules. Make sure you're in the project directory or a virtual environment.")
+    sys.exit(1)
 
 def run_single_simulation(args):
     """Run a single neurofeedback simulation"""
@@ -182,19 +186,16 @@ def run_optimization(args):
 
 def main():
     """Main function parsing command line arguments"""
+    # Create the top-level parser
     parser = argparse.ArgumentParser(description='Neurofeedback Model - Based on Davelaar (2018)')
     
-    # Common parameters
+    # Add global arguments
     parser.add_argument('--ne', type=int, default=800,
                         help='Number of excitatory neurons')
     parser.add_argument('--ni', type=int, default=200,
                         help='Number of inhibitory neurons')
     parser.add_argument('--n-striatum', type=int, default=1000,
                         help='Number of striatal units')
-    parser.add_argument('--duration', type=float, default=10,
-                        help='Simulation duration in seconds')
-    parser.add_argument('--dt', type=float, default=0.1,
-                        help='Simulation time step in milliseconds')
     parser.add_argument('--seed', type=int, default=None,
                         help='Random seed for reproducibility')
     parser.add_argument('--results-dir', type=str, default='./results',
@@ -205,6 +206,10 @@ def main():
     
     # Single simulation mode
     sim_parser = subparsers.add_parser('simulate', help='Run a single neurofeedback simulation')
+    sim_parser.add_argument('--duration', type=float, default=10,
+                          help='Simulation duration in seconds')
+    sim_parser.add_argument('--dt', type=float, default=0.1,
+                          help='Simulation time step in milliseconds')
     sim_parser.add_argument('--feedback-interval', type=float, default=100,
                           help='Feedback interval in milliseconds')
     sim_parser.add_argument('--learning-rate', type=float, default=0.01,
@@ -224,6 +229,10 @@ def main():
     
     # Parameter sweep mode
     sweep_parser = subparsers.add_parser('sweep', help='Run parameter sweep')
+    sweep_parser.add_argument('--duration', type=float, default=10,
+                          help='Simulation duration in seconds')
+    sweep_parser.add_argument('--dt', type=float, default=0.1,
+                          help='Simulation time step in milliseconds')
     sweep_parser.add_argument('--sweep-learning-rate', type=float, nargs=3, metavar=('MIN', 'MAX', 'STEPS'),
                             help='Sweep learning rate from MIN to MAX with STEPS steps')
     sweep_parser.add_argument('--sweep-feedback-interval', type=float, nargs=3, metavar=('MIN', 'MAX', 'STEPS'),
@@ -233,6 +242,10 @@ def main():
     
     # Optimization mode
     opt_parser = subparsers.add_parser('optimize', help='Run parameter optimization')
+    opt_parser.add_argument('--duration', type=float, default=10,
+                          help='Simulation duration in seconds')
+    opt_parser.add_argument('--dt', type=float, default=0.1,
+                          help='Simulation time step in milliseconds')
     opt_parser.add_argument('--opt-learning-rate', type=float, nargs=2, metavar=('MIN', 'MAX'),
                           help='Optimize learning rate between MIN and MAX')
     opt_parser.add_argument('--opt-feedback-interval', type=float, nargs=2, metavar=('MIN', 'MAX'),

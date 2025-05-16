@@ -34,6 +34,8 @@ cd neurofeedback-model
 
 2. Install the package and dependencies:
 ```
+python3 -m venv venv
+source venv/bin/activate
 pip install -e .
 ```
 
