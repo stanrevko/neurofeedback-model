@@ -7,7 +7,7 @@ from scipy.signal import welch
 
 # --- Speed-up and plot settings ---
 speedup = 10           # simulation steps per frame (e.g., 10× faster)
-raster_window = 1000   # ms window width for raster; set >= T for full simulation view
+raster_window = 1000   # ms window width for raster (1 second)
 
 # --- Network & simulation parameters ---
 Ne, Ni = 800, 200             # excitatory and inhibitory counts
@@ -17,7 +17,7 @@ base_dt = 1.0                 # base time step (ms)
 dt = base_dt
 total_steps = int(T / dt)
 
-# Compute sampling frequency for EEG buffer (in Hz)
+# Sampling frequency for EEG (Hz)
 fs = 1000.0 / dt
 
 # Determine frames and steps per update
@@ -32,7 +32,7 @@ b = np.concatenate((0.20 * np.ones(Ne), 0.25 - 0.05 * ri))
 c = np.concatenate((-65 + 15 * re**2,    -65 * np.ones(Ni)))
 d = np.concatenate((  8 - 6 * re**2,      2 * np.ones(Ni)))
 
-# --- Synaptic connectivity ---
+# --- Synaptic connectivity matrix ---
 S = np.hstack((
     0.5 * np.random.rand(N, Ne),     # excitatory→all
     -1.0 * np.random.rand(N, Ni)      # inhibitory→all
@@ -43,22 +43,24 @@ v = -65.0 * np.ones(N)       # membrane potentials
 u = b * v                     # recovery variables
 
 # --- Buffers for plotting ---
-spike_buffer = deque(maxlen=5000)
+spike_buffer = deque()       # store (absolute_time, neuron_index) for current second
 eeg_buffer   = deque([0.0] * 1000, maxlen=1000)
 
 # --- EEG filter state ---
 alpha = 0.9               # filter coefficient (~15 Hz cutoff)
 E_prev = 0.0              # previous EEG value
 
-# Global step counter
+# Globals for time tracking
 current_step = 0
+last_sec = -1             # tracks which second we're in
 
 # --- Matplotlib setup ---
 fig, (ax_raster, ax_eeg, ax_spec) = plt.subplots(3, 1, figsize=(8, 10))
 
-# Raster plot
+# Raster plot: fixed 0–raster_window ms for each second
 raster_scatter = ax_raster.scatter([], [], s=2, c='k')
 ax_raster.set_ylabel('Neuron index')
+ax_raster.set_xlabel('Time within second (ms)')
 ax_raster.set_ylim(0, N)
 ax_raster.set_xlim(0, raster_window)
 
@@ -73,7 +75,7 @@ ax_eeg.set_ylim(-80, -20)
 spec_line, = ax_spec.plot([], [])
 ax_spec.set_xlabel('Frequency (Hz)')
 ax_spec.set_ylabel('Amplitude')
-ax_spec.set_xlim(0, 50)  # limit to 0–50 Hz
+ax_spec.set_xlim(0, 50)
 ax_spec.set_ylim(0, None)
 
 
@@ -85,12 +87,19 @@ def init():
 
 
 def update(_frame):
-    global current_step, v, u, E_prev
-    # Run multiple simulation steps
+    global current_step, v, u, E_prev, last_sec
+    # Run multiple simulation steps per frame
     for _ in range(skip):
-        t = current_step * dt
+        t = current_step * dt  # absolute time in ms
 
-        # 1. Noisy input
+        # Determine current second
+        sec = int(t // raster_window)
+        if sec != last_sec:
+            # New second: clear spikes
+            spike_buffer.clear()
+            last_sec = sec
+
+        # 1. Noisy thalamic input
         I = np.concatenate((5.0 * np.random.randn(Ne),
                             2.0 * np.random.randn(Ni)))
 
@@ -103,16 +112,16 @@ def update(_frame):
             u[fired] += d[fired]
             I += np.sum(S[:, fired], axis=1)
 
-        # 3. Two-step Euler for v
+        # 3. Two-step Euler integration for v
         dv = 0.04 * v**2 + 5 * v + 140 - u + I
         v += 0.5 * dt * dv
         dv = 0.04 * v**2 + 5 * v + 140 - u + I
         v += 0.5 * dt * dv
 
-        # 4. Euler for u
+        # 4. Euler integration for u
         u += dt * a * (b * v - u)
 
-        # 5. EEG proxy
+        # 5. EEG proxy: mean excitatory potential + low-pass
         v_exc = v[:Ne].mean()
         E_curr = alpha * E_prev + (1 - alpha) * v_exc
         E_prev = E_curr
@@ -120,18 +129,20 @@ def update(_frame):
 
         current_step += 1
 
-    # Update raster scatter
-    coords = np.array(spike_buffer)
-    if coords.size > 0:
-        x_min = max(0, t - raster_window)
-        raster_scatter.set_offsets(coords)
-        ax_raster.set_xlim(x_min, x_min + raster_window)
+    # Build raster offsets relative to start of current second
+    if spike_buffer:
+        abs_times, neuron_ids = zip(*spike_buffer)
+        rel_times = np.array(abs_times) - last_sec * raster_window
+        offsets = np.column_stack((rel_times, neuron_ids))
+        raster_scatter.set_offsets(offsets)
+    else:
+        raster_scatter.set_offsets(np.empty((0, 2)))
 
     # Update EEG time-series
     eeg_data = np.array(eeg_buffer)
     ax_eeg_line.set_data(np.arange(-len(eeg_data), 0), eeg_data)
 
-    # Compute and update power spectrum via Welch
+    # Power spectrum via Welch
     f, Pxx = welch(eeg_data, fs=fs, nperseg=min(len(eeg_data), 256))
     spec_line.set_data(f, Pxx)
     ax_spec.set_ylim(0, np.max(Pxx) * 1.1)
