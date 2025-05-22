@@ -51,6 +51,10 @@ E_prev = 0.0
 t = 0
 t_sec = -1
 
+# For neurofeedback update timing
+last_fb_update_time = -500  # initialize to -500 to update immediately on start
+last_displayed_percent = 0.0
+
 # --- Figure & axes via GridSpec ---
 fig = plt.figure(figsize=(10, 6))
 gs = gridspec.GridSpec(3, 2, width_ratios=[4, 1], wspace=0.4)
@@ -76,31 +80,54 @@ ax_eeg.set_ylabel('EEG (a.u.)')
 # Spectrum axis
 spec_line, = ax_spec.plot([], [])
 ax_spec.set_xlim(0, 50)
-ax_spec.set_ylim(0, 0.4)
+ax_spec.set_ylim(0, 0.6)  # Adjust y-limit to match max amplitude scaling
 ax_spec.set_xlabel('Frequency (Hz)')
 ax_spec.set_ylabel('Amplitude')
 
-# Neurofeedback bar (persistent) and text label
-barh = ax_fb.barh([0], [0], height=0.5, color='g')[0]
-fb_text = ax_fb.text(0, 0, '', va='center', ha='left', fontsize=12)
-ax_fb.set_xlim(0, 1)
-ax_fb.set_ylim(-0.5, 0.5)
-ax_fb.set_yticks([])
-ax_fb.set_xlabel('Peak / Integral')
+# Neurofeedback vertical bar (persistent) and text label
+bar = ax_fb.bar([0], [0], width=0.5, color='g')[0]
+fb_text = ax_fb.text(0, 0, '', va='bottom', ha='center', fontsize=12)
+ax_fb.set_ylim(0, 1)
+ax_fb.set_xlim(-0.5, 0.5)
+ax_fb.set_xticks([])
+ax_fb.set_ylabel('Peak / Integral')
 ax_fb.set_title('Neurofeedback')
+
+def interpolate_color(percent: float) -> str:
+    """
+    Interpolate color between red (10%) and green (100%) for percent in [0.1, 1.0].
+    Percent below 0.1 is pure red.
+    Returns hex color string.
+    """
+    if percent <= 0.1:
+        return '#ff0000'  # red
+
+    # Normalize percent between 0.1 and 1.0 to [0,1]
+    norm = (percent - 0.1) / (1.0 - 0.1)
+
+    # Red and green RGB tuples
+    red = np.array([255, 0, 0])
+    green = np.array([0, 255, 0])
+
+    # Linear interpolation
+    rgb = (1 - norm) * red + norm * green
+    rgb = rgb.astype(int)
+    return f"#{rgb[0]:02x}{rgb[1]:02x}{rgb[2]:02x}"
 
 # Initialization function
 def init():
     raster_scatter.set_offsets(np.empty((0, 2)))
     ax_eeg_line.set_data([], [])
     spec_line.set_data([], [])
-    barh.set_width(0)
+    bar.set_height(0)
+    bar.set_color('#ff0000')
     fb_text.set_text('')
-    return raster_scatter, ax_eeg_line, spec_line, barh, fb_text
+    return raster_scatter, ax_eeg_line, spec_line, bar, fb_text
 
 # Update function
 def update(_frame):
-    global v, u, E_prev, t, t_sec
+    global v, u, E_prev, t, t_sec, last_fb_update_time, last_displayed_percent
+
     # Run multiple simulation steps per frame
     for _ in range(skip):
         t += dt
@@ -111,6 +138,7 @@ def update(_frame):
 
         # 1. Noisy input from thalamus
         I = np.concatenate((5.0 * np.random.randn(Ne), 2.0 * np.random.randn(Ni)))
+
         # 2. Detect spikes
         fired = np.where(v >= 30.0)[0]
         if fired.size > 0:
@@ -152,19 +180,29 @@ def update(_frame):
     f, Pxx = welch(eeg_data, fs=fs, nperseg=min(len(eeg_data), 256))
     spec_line.set_data(f, Pxx)
 
-    # Compute alpha-band integral and normalize to maximum amplitude
+    # Compute alpha-band integral over last second (8-12 Hz)
     alpha_mask = (f >= 8) & (f <= 12)
     P_alpha = Pxx[alpha_mask]
-    integral_alpha = np.sum(P_alpha) *10
-    max_amplitude = (12-8) * 0.4
+    integral_alpha = np.sum(P_alpha) * 10  # scale factor consistent with original
+    max_amplitude = (12 - 8) * 0.6         # changed from 0.4 to 0.6
     percent = integral_alpha / max_amplitude if max_amplitude > 0 else 0.0
+    percent = np.clip(percent, 0, 1)       # clamp between 0 and 1
 
-    # Update neurofeedback bar and label with percent
-    barh.set_width(percent)
-    fb_text.set_x(percent + 0.02)
-    fb_text.set_text(f"{percent*100:.1f}%")
+    # Update neurofeedback bar only every 500 ms
+    if (t - last_fb_update_time) >= 500:
+        last_displayed_percent = percent
+        last_fb_update_time = t
 
-    return raster_scatter, ax_eeg_line, spec_line, barh, fb_text
+        # Interpolate bar color based on percent
+        color = interpolate_color(last_displayed_percent)
+        bar.set_color(color)
+
+    # Update bar height and label position with last displayed percent
+    bar.set_height(last_displayed_percent)
+    fb_text.set_y(last_displayed_percent + 0.02)
+    fb_text.set_text(f"{last_displayed_percent * 100:.1f}%")
+
+    return raster_scatter, ax_eeg_line, spec_line, bar, fb_text
 
 # Create animation
 ani = animation.FuncAnimation(fig, update, frames=frame_count, init_func=init, interval=1, blit=False)
